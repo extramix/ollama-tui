@@ -9,9 +9,11 @@ import (
 )
 
 type model struct {
-	input    textinput.Model
-	messages []string
-	quitting bool
+	input       textinput.Model
+	messages    []string
+	quitting    bool
+	waiting     bool
+	ollamaModel string
 }
 
 // Init initializes the model. It can return a command.
@@ -23,19 +25,29 @@ func (m *model) Init() tea.Cmd {
 	ti.Width = 20
 	ti.Prompt = "> "
 	m.input = ti
+	m.ollamaModel = "llama3.2"
 	return nil
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
+	case ollamaResponseMsg:
+		m.waiting = false
+		if msg.err != nil {
+			m.messages = append(m.messages, "Assistant: Error - "+msg.err.Error())
+		} else {
+			m.messages = append(m.messages, "Assistant: "+msg.response)
+		}
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyEnter:
-			// Handle user pressing Enter (e.g., send input to Ollama)
-			m.messages = append(m.messages, "User: "+m.input.Value())
-			// TODO: Send m.input to Ollama here and append response
-			m.input.Reset() // Clear input after sending
+			userInput := m.input.Value()
+			m.messages = append(m.messages, "User: "+userInput)
+			m.input.Reset()
+			m.waiting = true
+			return m, sendToOllama(userInput, m.ollamaModel)
 		case tea.KeyCtrlC, tea.KeyEsc:
 			m.quitting = true
 			return m, tea.Quit
