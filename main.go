@@ -60,7 +60,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.currentResponse += msg.token
-		m.messages[len(m.messages)-1] = "Assistant: " + m.currentResponse + msg.token
+		m.messages[len(m.messages)-1] = "Assistant: " + m.currentResponse
 		m.viewport.SetContent(m.View())
 		m.viewport.GotoBottom()
 		return m, streamResponse(m.streamResponse)
