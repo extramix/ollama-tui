@@ -184,6 +184,13 @@ func (m model) View() string {
 
 	// Render the viewport (chat messages)
 	view.WriteString(m.viewport.View())
+
+	// Add a thin separator line
+	separatorStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("8")).
+		Width(m.viewport.Width - 8)
+	view.WriteString("\n")
+	view.WriteString(separatorStyle.Render(strings.Repeat("─", m.viewport.Width-8)))
 	view.WriteString("\n")
 
 	// Render the input area with colorful styling
