@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -62,12 +63,20 @@ func (m model) View() string {
 		return "Exiting..."
 	}
 
-	s := "Ollama TUI Chat\n\n"
+	termWidth := 80
+	s := ""
 	for _, msg := range m.messages {
-		s += msg + "\n"
+		wrapped := wrapText(msg, termWidth)
+		for _, line := range wrapped {
+			s += line + "\n"
+		}
+		s += "\n"
 	}
-	s += "\n--------------------\n"
+
+	s += "\n"
 	s += fmt.Sprintf("Your input: %s", m.input.View())
+	s += "\n"
+	s += "\n--------------------\n"
 	return s
 }
 
@@ -77,4 +86,23 @@ func main() {
 		fmt.Printf("Alas, there's been an error: %v", err)
 		os.Exit(1)
 	}
+}
+
+func wrapText(text string, width int) []string {
+	if len(text) <= width {
+		return []string{text}
+	}
+	words := strings.Fields(text)
+	wrapped := []string{}
+	currentLine := words[0]
+	for _, word := range words[1:] {
+		if len(currentLine)+len(word)+1 > width {
+			wrapped = append(wrapped, currentLine)
+			currentLine = word
+		} else {
+			currentLine += " " + word
+		}
+	}
+	wrapped = append(wrapped, currentLine)
+	return wrapped
 }
