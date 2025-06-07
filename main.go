@@ -28,7 +28,7 @@ type model struct {
 }
 
 var spinnerFrames = []string{
-	"✨.",
+	"✨",
 	"✨.",
 	"✨..",
 }
@@ -90,8 +90,19 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.viewport.GotoBottom()
 		return m, nil
 	case tea.KeyMsg:
+		if m.waiting {
+			switch msg.Type {
+			case tea.KeyCtrlC, tea.KeyEsc:
+				m.quitting = true
+				return m, tea.Quit
+			}
+			return m, nil
+		}
 		switch msg.Type {
 		case tea.KeyEnter:
+			if m.input.Value() == "" {
+				return m, nil
+			}
 			userInput := m.input.Value()
 			m.messages = append(m.messages, "🧋 "+userInput)
 			m.input.Reset()
@@ -110,9 +121,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	m.input, cmd = m.input.Update(msg)
+	if !m.waiting {
+		m.input, cmd = m.input.Update(msg)
+	}
 	return m, cmd
-
 }
 
 func (m model) View() string {
@@ -131,10 +143,10 @@ func (m model) View() string {
 	}
 
 	if m.waiting {
-		s += spinnerFrames[m.spinnerIndex] + "\n"
+		s += spinnerFrames[m.spinnerIndex]
+	} else {
+		s += fmt.Sprintf("🧋%s", m.input.View())
 	}
-
-	s += fmt.Sprintf("🧋%s", m.input.View())
 	return s
 }
 
