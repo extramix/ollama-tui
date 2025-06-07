@@ -6,11 +6,14 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"golang.org/x/term"
 )
 
 type model struct {
 	input       textinput.Model
+	viewport    viewport.Model
 	messages    []string
 	quitting    bool
 	waiting     bool
@@ -27,6 +30,9 @@ func (m *model) Init() tea.Cmd {
 	ti.Prompt = "> "
 	m.input = ti
 	m.ollamaModel = "llama3.2"
+	m.viewport = viewport.New(80, 10)
+	m.viewport.SetContent(m.View())
+	m.viewport.GotoBottom()
 	return nil
 }
 
@@ -40,6 +46,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.messages = append(m.messages, "Assistant: "+msg.response)
 		}
+		m.viewport.SetContent(m.View())
+		m.viewport.GotoBottom()
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.Type {
@@ -63,10 +71,10 @@ func (m model) View() string {
 		return "Exiting..."
 	}
 
-	termWidth := 80
+	termWidth, _ := getTerminalSize()
 	s := ""
 	for _, msg := range m.messages {
-		wrapped := wrapText(msg, termWidth)
+		wrapped := wrapText(msg, termWidth-4)
 		for _, line := range wrapped {
 			s += line + "\n"
 		}
@@ -105,4 +113,13 @@ func wrapText(text string, width int) []string {
 	}
 	wrapped = append(wrapped, currentLine)
 	return wrapped
+}
+
+func getTerminalSize() (int, int) {
+	fd := os.Stdout.Fd()
+	width, height, err := term.GetSize(int(fd))
+	if err != nil {
+		return 80, 20
+	}
+	return width, height
 }
