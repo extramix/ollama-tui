@@ -32,8 +32,8 @@ func (m *model) Init() tea.Cmd {
 	ti := textinput.New()
 	ti.Placeholder = "What's going on?"
 	ti.Focus()
-	ti.CharLimit = 256
-	ti.Width = 20
+	ti.CharLimit = 1000
+	ti.Width = 80
 	ti.Prompt = " > "
 	m.input = ti
 	m.ollamaModel = "llama3.2"
@@ -58,12 +58,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Initialize viewport with proper dimensions
 			m.viewport = viewport.New(msg.Width, msg.Height-3) // Reserve 3 lines for input area
 			m.viewport.YPosition = 0
-			m.viewport.HighPerformanceRendering = false
+			m.viewport.MouseWheelEnabled = true
+			// Set input width to full terminal width minus prompt and some padding
+			m.input.Width = msg.Width - len(m.input.Prompt) - 2
 			m.updateViewportContent()
 			m.ready = true
 		} else {
 			m.viewport.Width = msg.Width
 			m.viewport.Height = msg.Height - 3
+			// Update input width when window is resized
+			m.input.Width = msg.Width - len(m.input.Prompt) - 2
 			m.updateViewportContent()
 		}
 
@@ -135,13 +139,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, cmd
 			}
 		}
+
+	case tea.MouseMsg:
+		// Handle mouse events for viewport scrolling
+		if !m.waiting {
+			m.viewport, cmd = m.viewport.Update(msg)
+			return m, cmd
+		}
 	}
 
 	if m.waiting {
 		m.spinner, cmd = m.spinner.Update(msg)
 		cmds = append(cmds, cmd)
 	} else {
-		// Only update input when not waiting and not scrolling
+		// Only update input when not waiting
 		m.input, cmd = m.input.Update(msg)
 		cmds = append(cmds, cmd)
 	}
@@ -164,18 +175,19 @@ func (m model) View() string {
 	view.WriteString(m.viewport.View())
 	view.WriteString("\n")
 
-	// Render the input area
+	// Render the input area with scroll info for debugging
 	if m.waiting {
 		view.WriteString(fmt.Sprintf("%s cooking...", m.spinner.View()))
 	} else {
-		view.WriteString(fmt.Sprintf("🧋%s", m.input.View()))
+		scrollInfo := fmt.Sprintf(" [%d/%d]", m.viewport.YOffset, m.viewport.TotalLineCount())
+		view.WriteString(fmt.Sprintf("🧋%s%s", m.input.View(), scrollInfo))
 	}
 
 	return view.String()
 }
 
 func main() {
-	p := tea.NewProgram(&model{}, tea.WithAltScreen())
+	p := tea.NewProgram(&model{}, tea.WithAltScreen(), tea.WithMouseAllMotion())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Alas, there's been an error: %v", err)
 		os.Exit(1)
@@ -264,7 +276,10 @@ func (m *model) updateViewportContent() {
 
 	content := m.renderMessages()
 	m.viewport.SetContent(content)
-	m.viewport.GotoBottom()
+	// Only auto-scroll to bottom if we're already at or near the bottom
+	if m.viewport.AtBottom() || m.viewport.YOffset >= m.viewport.TotalLineCount()-m.viewport.Height-3 {
+		m.viewport.GotoBottom()
+	}
 }
 
 func (m *model) renderMessages() string {
@@ -282,6 +297,9 @@ func (m *model) renderMessages() string {
 			content.WriteString("\n")
 		}
 	}
+
+	// Add some extra lines to ensure there's scrollable content
+	content.WriteString("\n\n")
 
 	return content.String()
 }
