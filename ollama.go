@@ -29,6 +29,16 @@ type ollamaResponseMsg struct {
 	err      error
 }
 
+type startStreamMsg struct {
+	response *http.Response
+}
+
+type streamTokenMsg struct {
+	token string
+	done  bool
+	err   error
+}
+
 func NewOllamaClient(model string) *OllamaClient {
 	return &OllamaClient{
 		baseURL: "http://localhost:11434",
@@ -40,7 +50,7 @@ func (c *OllamaClient) SendPrompt(prompt string) (string, error) {
 	request := OllamaRequest{
 		Model:  c.model,
 		Prompt: prompt,
-		Stream: false,
+		Stream: true,
 	}
 
 	jsonRequest, err := json.Marshal(request)
@@ -63,9 +73,44 @@ func (c *OllamaClient) SendPrompt(prompt string) (string, error) {
 	return ollamaResponse.Response, nil
 }
 
-func sendToOllama(prompt string, model string) tea.Cmd {
+func (c *OllamaClient) SendPromptStream(prompt string) tea.Cmd {
 	return func() tea.Msg {
-		response, err := NewOllamaClient(model).SendPrompt(prompt)
-		return ollamaResponseMsg{response: response, err: err}
+		request := OllamaRequest{
+			Model:  c.model,
+			Prompt: prompt,
+			Stream: true,
+		}
+
+		jsonRequest, err := json.Marshal(request)
+		if err != nil {
+			return ollamaResponseMsg{err: err}
+		}
+
+		response, err := http.Post(c.baseURL+"/api/generate", "application/json", bytes.NewBuffer(jsonRequest))
+		if err != nil {
+			return ollamaResponseMsg{err: err}
+		}
+
+		return startStreamMsg{response: response}
 	}
+}
+
+func streamResponse(response *http.Response) tea.Cmd {
+	return func() tea.Msg {
+
+		decoder := json.NewDecoder(response.Body)
+		var ollamaResponse OllamaResponse
+		if err := decoder.Decode(&ollamaResponse); err != nil {
+			return ollamaResponseMsg{err: err}
+		}
+		if ollamaResponse.Done {
+			response.Body.Close()
+			return ollamaResponseMsg{response: ollamaResponse.Response, err: nil}
+		}
+		return streamTokenMsg{token: ollamaResponse.Response, done: false, err: nil}
+	}
+}
+
+func sendToOllama(prompt string, model string) tea.Cmd {
+	return NewOllamaClient(model).SendPromptStream(prompt)
 }

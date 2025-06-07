@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 
@@ -12,12 +13,14 @@ import (
 )
 
 type model struct {
-	input       textinput.Model
-	viewport    viewport.Model
-	messages    []string
-	quitting    bool
-	waiting     bool
-	ollamaModel string
+	input           textinput.Model
+	viewport        viewport.Model
+	currentResponse string
+	streamResponse  *http.Response
+	messages        []string
+	quitting        bool
+	waiting         bool
+	ollamaModel     string
 }
 
 // Init initializes the model. It can return a command.
@@ -39,6 +42,28 @@ func (m *model) Init() tea.Cmd {
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	switch msg := msg.(type) {
+	case startStreamMsg:
+		m.currentResponse = ""
+		m.messages = append(m.messages, "Assistant:")
+		m.streamResponse = msg.response
+		return m, streamResponse(msg.response)
+	case streamTokenMsg:
+		if msg.err != nil {
+			m.waiting = false
+			m.messages[len(m.messages)-1] = "Assistant: Error - " + msg.err.Error()
+			m.streamResponse = nil
+			return m, nil
+		}
+		if msg.done {
+			m.waiting = false
+			m.streamResponse = nil
+			return m, nil
+		}
+		m.currentResponse += msg.token
+		m.messages[len(m.messages)-1] = "Assistant: " + m.currentResponse + msg.token
+		m.viewport.SetContent(m.View())
+		m.viewport.GotoBottom()
+		return m, streamResponse(m.streamResponse)
 	case ollamaResponseMsg:
 		m.waiting = false
 		if msg.err != nil {
