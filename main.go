@@ -5,15 +5,14 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"golang.org/x/term"
 )
-
-type tickMsg time.Time
 
 type model struct {
 	input           textinput.Model
@@ -24,19 +23,7 @@ type model struct {
 	quitting        bool
 	waiting         bool
 	ollamaModel     string
-	spinnerIndex    int
-}
-
-var spinnerFrames = []string{
-	"✨",
-	"✨.",
-	"✨..",
-}
-
-func tick() tea.Cmd {
-	return tea.Tick(time.Millisecond*500, func(t time.Time) tea.Msg {
-		return tickMsg(t)
-	})
+	spinner         spinner.Model
 }
 
 // Init initializes the model. It can return a command.
@@ -53,6 +40,12 @@ func (m *model) Init() tea.Cmd {
 	m.viewport = viewport.New(80, 10)
 	m.viewport.SetContent(m.View())
 	m.viewport.GotoBottom()
+
+	s := spinner.New()
+	s.Spinner = spinner.Globe
+	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
+	m.spinner = s
+
 	return nil
 }
 
@@ -63,7 +56,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.currentResponse = ""
 		m.messages = append(m.messages, "🦙")
 		m.streamResponse = msg.response
-		return m, streamResponse(msg.response)
+		return m, tea.Batch(streamResponse(msg.response), m.spinner.Tick)
 	case streamTokenMsg:
 		if msg.err != nil {
 			m.waiting = false
@@ -107,23 +100,19 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, "🧋 "+userInput)
 			m.input.Reset()
 			m.waiting = true
-			m.spinnerIndex = 0
-			return m, tea.Batch(sendToOllama(userInput, m.ollamaModel), tick())
+			return m, tea.Batch(sendToOllama(userInput, m.ollamaModel), m.spinner.Tick)
 		case tea.KeyCtrlC, tea.KeyEsc:
 			m.quitting = true
 			return m, tea.Quit
 		}
-	case tickMsg:
-		if m.waiting {
-			m.spinnerIndex = (m.spinnerIndex + 1) % len(spinnerFrames)
-			m.viewport.SetContent(m.View())
-			return m, tick()
-		}
-		return m, nil
 	}
-	if !m.waiting {
-		m.input, cmd = m.input.Update(msg)
+
+	if m.waiting {
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
 	}
+
+	m.input, cmd = m.input.Update(msg)
 	return m, cmd
 }
 
@@ -143,7 +132,7 @@ func (m model) View() string {
 	}
 
 	if m.waiting {
-		s += spinnerFrames[m.spinnerIndex]
+		s += fmt.Sprintf("%s cooking...", m.spinner.View())
 	} else {
 		s += fmt.Sprintf("🧋%s", m.input.View())
 	}
