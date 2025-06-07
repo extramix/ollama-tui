@@ -24,11 +24,11 @@ type model struct {
 	waiting         bool
 	ollamaModel     string
 	spinner         spinner.Model
+	ready           bool
 }
 
 // Init initializes the model. It can return a command.
 func (m *model) Init() tea.Cmd {
-	fmt.Print("\033[2J\033[H")
 	ti := textinput.New()
 	ti.Placeholder = "What's going on?"
 	ti.Focus()
@@ -37,31 +37,49 @@ func (m *model) Init() tea.Cmd {
 	ti.Prompt = " > "
 	m.input = ti
 	m.ollamaModel = "llama3.2"
-	m.viewport = viewport.New(80, 10)
-	m.viewport.SetContent(m.View())
-	m.viewport.GotoBottom()
 
 	s := spinner.New()
 	s.Spinner = spinner.Globe
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 	m.spinner = s
 
-	return nil
+	return tea.EnterAltScreen
 }
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
+	var (
+		cmd  tea.Cmd
+		cmds []tea.Cmd
+	)
+
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		if !m.ready {
+			// Initialize viewport with proper dimensions
+			m.viewport = viewport.New(msg.Width, msg.Height-3) // Reserve 3 lines for input area
+			m.viewport.YPosition = 0
+			m.viewport.HighPerformanceRendering = false
+			m.updateViewportContent()
+			m.ready = true
+		} else {
+			m.viewport.Width = msg.Width
+			m.viewport.Height = msg.Height - 3
+			m.updateViewportContent()
+		}
+
 	case startStreamMsg:
 		m.currentResponse = ""
 		m.messages = append(m.messages, "🦙")
 		m.streamResponse = msg.response
+		m.updateViewportContent()
 		return m, tea.Batch(streamResponse(msg.response), m.spinner.Tick)
+
 	case streamTokenMsg:
 		if msg.err != nil {
 			m.waiting = false
 			m.messages[len(m.messages)-1] = "🦙 Error - " + msg.err.Error()
 			m.streamResponse = nil
+			m.updateViewportContent()
 			return m, nil
 		}
 		if msg.done {
@@ -69,19 +87,21 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.streamResponse = nil
 			return m, nil
 		}
-		m.currentResponse += msg.token
+		// Format the new token and add it to the response
+		formattedToken := formatOllamaResponse(msg.token, m.currentResponse)
+		m.currentResponse += formattedToken
 		m.messages[len(m.messages)-1] = "🦙 " + m.currentResponse
-		m.viewport.SetContent(m.View())
-		m.viewport.GotoBottom()
+		m.updateViewportContent()
 		return m, streamResponse(m.streamResponse)
+
 	case ollamaResponseMsg:
 		m.waiting = false
 		if msg.err != nil {
 			m.messages = append(m.messages, "🦙 Error - "+msg.err.Error())
 		}
-		m.viewport.SetContent(m.View())
-		m.viewport.GotoBottom()
+		m.updateViewportContent()
 		return m, nil
+
 	case tea.KeyMsg:
 		if m.waiting {
 			switch msg.Type {
@@ -91,6 +111,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+
 		switch msg.Type {
 		case tea.KeyEnter:
 			if m.input.Value() == "" {
@@ -100,20 +121,32 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.messages = append(m.messages, "🧋 "+userInput)
 			m.input.Reset()
 			m.waiting = true
+			m.updateViewportContent()
 			return m, tea.Batch(sendToOllama(userInput, m.ollamaModel), m.spinner.Tick)
+
 		case tea.KeyCtrlC, tea.KeyEsc:
 			m.quitting = true
 			return m, tea.Quit
+
+		// Handle viewport scrolling keys
+		case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown:
+			if !m.waiting {
+				m.viewport, cmd = m.viewport.Update(msg)
+				return m, cmd
+			}
 		}
 	}
 
 	if m.waiting {
 		m.spinner, cmd = m.spinner.Update(msg)
-		return m, cmd
+		cmds = append(cmds, cmd)
+	} else {
+		// Only update input when not waiting and not scrolling
+		m.input, cmd = m.input.Update(msg)
+		cmds = append(cmds, cmd)
 	}
 
-	m.input, cmd = m.input.Update(msg)
-	return m, cmd
+	return m, tea.Batch(cmds...)
 }
 
 func (m model) View() string {
@@ -121,48 +154,97 @@ func (m model) View() string {
 		return "Exiting..."
 	}
 
-	termWidth, _ := getTerminalSize()
-	s := ""
-	for _, msg := range m.messages {
-		wrapped := wrapText(msg, termWidth-4)
-		for _, line := range wrapped {
-			s += line + "\n"
-		}
-		s += "\n"
+	if !m.ready {
+		return "\n  Initializing..."
 	}
 
+	var view strings.Builder
+
+	// Render the viewport (chat messages)
+	view.WriteString(m.viewport.View())
+	view.WriteString("\n")
+
+	// Render the input area
 	if m.waiting {
-		s += fmt.Sprintf("%s cooking...", m.spinner.View())
+		view.WriteString(fmt.Sprintf("%s cooking...", m.spinner.View()))
 	} else {
-		s += fmt.Sprintf("🧋%s", m.input.View())
+		view.WriteString(fmt.Sprintf("🧋%s", m.input.View()))
 	}
-	return s
+
+	return view.String()
 }
 
 func main() {
-	p := tea.NewProgram(&model{})
+	p := tea.NewProgram(&model{}, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Printf("Alas, there's been an error: %v", err)
 		os.Exit(1)
 	}
 }
 
-func wrapText(text string, width int) []string {
-	if len(text) <= width {
-		return []string{text}
-	}
-	words := strings.Fields(text)
-	wrapped := []string{}
-	currentLine := words[0]
-	for _, word := range words[1:] {
-		if len(currentLine)+len(word)+1 > width {
-			wrapped = append(wrapped, currentLine)
-			currentLine = word
-		} else {
-			currentLine += " " + word
+func formatOllamaResponse(newToken, existingResponse string) string {
+	if strings.HasPrefix(strings.TrimSpace(newToken), "1. ") ||
+		strings.HasPrefix(strings.TrimSpace(newToken), "2. ") ||
+		strings.HasPrefix(strings.TrimSpace(newToken), "3. ") ||
+		strings.HasPrefix(strings.TrimSpace(newToken), "4. ") ||
+		strings.HasPrefix(strings.TrimSpace(newToken), "5. ") {
+		if len(existingResponse) > 0 && !strings.HasSuffix(existingResponse, "\n") {
+			return "\n" + newToken
 		}
 	}
-	wrapped = append(wrapped, currentLine)
+
+	if strings.HasPrefix(strings.TrimSpace(newToken), "* ") ||
+		strings.HasPrefix(strings.TrimSpace(newToken), "- ") {
+		if len(existingResponse) > 0 && !strings.HasSuffix(existingResponse, "\n") {
+			return "\n" + newToken
+		}
+	}
+
+	if strings.Contains(newToken, ". ") && !strings.Contains(newToken, "..") {
+		formatted := strings.ReplaceAll(newToken, ". ", ".\n")
+		return formatted
+	}
+
+	return newToken
+}
+
+func wrapText(text string, width int) []string {
+	lines := strings.Split(text, "\n")
+	var wrapped []string
+
+	for _, line := range lines {
+		// Preserve empty lines for spacing
+		if strings.TrimSpace(line) == "" {
+			wrapped = append(wrapped, "")
+			continue
+		}
+
+		line = strings.TrimSpace(line)
+
+		// If line is short enough, add it as-is
+		if len(line) <= width {
+			wrapped = append(wrapped, line)
+			continue
+		}
+
+		// Word wrap longer lines
+		words := strings.Fields(line)
+		if len(words) == 0 {
+			continue
+		}
+
+		currentLine := words[0]
+		for _, word := range words[1:] {
+			if len(currentLine)+len(word)+1 > width {
+				wrapped = append(wrapped, currentLine)
+				currentLine = word
+			} else {
+				currentLine += " " + word
+			}
+		}
+		wrapped = append(wrapped, currentLine)
+	}
+
 	return wrapped
 }
 
@@ -173,4 +255,33 @@ func getTerminalSize() (int, int) {
 		return 80, 20
 	}
 	return width, height
+}
+
+func (m *model) updateViewportContent() {
+	if !m.ready {
+		return
+	}
+
+	content := m.renderMessages()
+	m.viewport.SetContent(content)
+	m.viewport.GotoBottom()
+}
+
+func (m *model) renderMessages() string {
+	var content strings.Builder
+
+	for i, msg := range m.messages {
+		wrapped := wrapText(msg, m.viewport.Width-2)
+		for _, line := range wrapped {
+			content.WriteString(line)
+			content.WriteString("\n")
+		}
+
+		// Add spacing between messages, but not after the last one
+		if i < len(m.messages)-1 {
+			content.WriteString("\n")
+		}
+	}
+
+	return content.String()
 }
