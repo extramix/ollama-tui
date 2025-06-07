@@ -59,15 +59,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport = viewport.New(msg.Width, msg.Height-3) // Reserve 3 lines for input area
 			m.viewport.YPosition = 0
 			m.viewport.MouseWheelEnabled = true
-			// Set input width to full terminal width minus prompt and some padding
-			m.input.Width = msg.Width - len(m.input.Prompt) - 2
+			// Set input width to full terminal width minus prompt and padding
+			m.input.Width = msg.Width - len(m.input.Prompt) - 6 // Account for lipgloss padding
 			m.updateViewportContent()
 			m.ready = true
 		} else {
 			m.viewport.Width = msg.Width
 			m.viewport.Height = msg.Height - 3
 			// Update input width when window is resized
-			m.input.Width = msg.Width - len(m.input.Prompt) - 2
+			m.input.Width = msg.Width - len(m.input.Prompt) - 6 // Account for lipgloss padding
 			m.updateViewportContent()
 		}
 
@@ -169,6 +169,11 @@ func (m model) View() string {
 		return "\n  Initializing..."
 	}
 
+	// Create main container style with padding
+	mainStyle := lipgloss.NewStyle().
+		Width(m.viewport.Width).
+		Padding(0, 4)
+
 	var view strings.Builder
 
 	// Render the viewport (chat messages)
@@ -183,7 +188,7 @@ func (m model) View() string {
 		view.WriteString(fmt.Sprintf("🧋%s%s", m.input.View(), scrollInfo))
 	}
 
-	return view.String()
+	return mainStyle.Render(view.String())
 }
 
 func main() {
@@ -286,7 +291,9 @@ func (m *model) renderMessages() string {
 	var content strings.Builder
 
 	for i, msg := range m.messages {
-		wrapped := wrapText(msg, m.viewport.Width-2)
+		// Apply markdown formatting before wrapping
+		formattedMsg := formatMarkdown(msg)
+		wrapped := wrapText(formattedMsg, m.viewport.Width-6) // Account for padding
 		for _, line := range wrapped {
 			content.WriteString(line)
 			content.WriteString("\n")
@@ -302,4 +309,39 @@ func (m *model) renderMessages() string {
 	content.WriteString("\n\n")
 
 	return content.String()
+}
+
+func formatMarkdown(text string) string {
+	boldStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
+	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+
+	for {
+		start := strings.Index(text, "**")
+		if start == -1 {
+			break
+		}
+
+		end := strings.Index(text[start+2:], "**")
+		if end == -1 {
+			break
+		}
+
+		end += start + 2
+
+		boldText := text[start+2 : end]
+
+		styledText := boldStyle.Render(boldText)
+		text = text[:start] + styledText + text[end+2:]
+	}
+
+	lines := strings.Split(text, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "##") {
+			headerText := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "##"))
+			lines[i] = headerStyle.Render(headerText)
+		}
+	}
+	text = strings.Join(lines, "\n")
+
+	return text
 }
