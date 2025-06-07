@@ -11,7 +11,6 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"golang.org/x/term"
 )
 
 type model struct {
@@ -43,6 +42,11 @@ func (m *model) Init() tea.Cmd {
 	s.Style = lipgloss.NewStyle().Foreground(lipgloss.Color("205"))
 	m.spinner = s
 
+	// Initialize with welcome messages
+	m.messages = []string{
+		"🦙 **Welcome to Ollama TUI!**\n\nA beautiful terminal interface for conversing with local AI models.\n\n## Getting Started\n\n- Ask questions and get intelligent responses\n- Have natural conversations with AI\n- Use arrow keys or mouse to scroll through chat history\n– Press Ctrl+C or ESC to exit anytime\n\n## Quick Tips\n\n- Type your questions naturally - no special commands needed\n- The AI will stream responses in real-time\n- Scroll up to review previous conversations\n- Currently using model: **" + m.ollamaModel + "**\n\nReady to chat! What would you like to know?",
+	}
+
 	return tea.EnterAltScreen
 }
 
@@ -61,8 +65,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.MouseWheelEnabled = true
 			// Set input width to full terminal width minus prompt and padding
 			m.input.Width = msg.Width - len(m.input.Prompt) - 6 // Account for lipgloss padding
-			m.updateViewportContent()
 			m.ready = true
+			m.updateViewportContent()
 		} else {
 			m.viewport.Width = msg.Width
 			m.viewport.Height = msg.Height - 3
@@ -162,11 +166,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	if m.quitting {
-		return "Exiting..."
+		quitStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
+		return quitStyle.Render("✨ Thanks for using Ollama TUI! Goodbye! ✨")
 	}
 
 	if !m.ready {
-		return "\n  Initializing..."
+		loadingStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
+		return loadingStyle.Render("\n  🚀 Initializing Ollama TUI...")
 	}
 
 	// Create main container style with padding
@@ -180,12 +186,18 @@ func (m model) View() string {
 	view.WriteString(m.viewport.View())
 	view.WriteString("\n")
 
-	// Render the input area with scroll info for debugging
+	// Render the input area with colorful styling
 	if m.waiting {
-		view.WriteString(fmt.Sprintf("%s cooking...", m.spinner.View()))
+		spinnerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("205")).Bold(true)
+		view.WriteString(spinnerStyle.Render(fmt.Sprintf("%s lemme cook...", m.spinner.View())))
 	} else {
+		// Style the input prompt
+		promptStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true) // Green
+		inputStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("15"))             // White
+		scrollInfoStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))         // Gray
+
 		scrollInfo := fmt.Sprintf(" [%d/%d]", m.viewport.YOffset, m.viewport.TotalLineCount())
-		view.WriteString(fmt.Sprintf("🧋%s%s", m.input.View(), scrollInfo))
+		view.WriteString(promptStyle.Render("🧋 ") + inputStyle.Render(m.input.View()) + scrollInfoStyle.Render(scrollInfo))
 	}
 
 	return mainStyle.Render(view.String())
@@ -265,15 +277,6 @@ func wrapText(text string, width int) []string {
 	return wrapped
 }
 
-func getTerminalSize() (int, int) {
-	fd := os.Stdout.Fd()
-	width, height, err := term.GetSize(int(fd))
-	if err != nil {
-		return 80, 20
-	}
-	return width, height
-}
-
 func (m *model) updateViewportContent() {
 	if !m.ready {
 		return
@@ -314,6 +317,8 @@ func (m *model) renderMessages() string {
 func formatMarkdown(text string) string {
 	boldStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("15"))
 	headerStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
+	bulletStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+	userStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11")).Bold(true)
 
 	for {
 		start := strings.Index(text, "**")
@@ -336,9 +341,21 @@ func formatMarkdown(text string) string {
 
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "##") {
-			headerText := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "##"))
-			lines[i] = headerStyle.Render(headerText)
+		trimmed := strings.TrimSpace(line)
+
+		// Style headers
+		if strings.HasPrefix(trimmed, "##") {
+			headerText := strings.TrimSpace(strings.TrimPrefix(trimmed, "##"))
+			lines[i] = headerStyle.Render("✨ " + headerText + " ✨")
+		} else if strings.HasPrefix(trimmed, "•") {
+			// Style bullet points
+			bulletText := strings.TrimSpace(strings.TrimPrefix(trimmed, "•"))
+			lines[i] = bulletStyle.Render("  ▶ ") + bulletText
+		} else if strings.HasPrefix(trimmed, "🧋") {
+			// Style user messages
+			userText := strings.TrimPrefix(trimmed, "🧋 ")
+			userEmojiStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("11")) // Yellow
+			lines[i] = userEmojiStyle.Render("🧋 ") + userStyle.Render(userText)
 		}
 	}
 	text = strings.Join(lines, "\n")
