@@ -5,12 +5,15 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"golang.org/x/term"
 )
+
+type tickMsg time.Time
 
 type model struct {
 	input           textinput.Model
@@ -21,16 +24,30 @@ type model struct {
 	quitting        bool
 	waiting         bool
 	ollamaModel     string
+	spinnerIndex    int
+}
+
+var spinnerFrames = []string{
+	"✨.",
+	"✨.",
+	"✨..",
+}
+
+func tick() tea.Cmd {
+	return tea.Tick(time.Millisecond*500, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
 }
 
 // Init initializes the model. It can return a command.
 func (m *model) Init() tea.Cmd {
+	fmt.Print("\033[2J\033[H")
 	ti := textinput.New()
 	ti.Placeholder = "What's going on?"
 	ti.Focus()
 	ti.CharLimit = 256
 	ti.Width = 20
-	ti.Prompt = "> "
+	ti.Prompt = " > "
 	m.input = ti
 	m.ollamaModel = "llama3.2"
 	m.viewport = viewport.New(80, 10)
@@ -44,13 +61,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case startStreamMsg:
 		m.currentResponse = ""
-		m.messages = append(m.messages, "Assistant:")
+		m.messages = append(m.messages, "🦙")
 		m.streamResponse = msg.response
 		return m, streamResponse(msg.response)
 	case streamTokenMsg:
 		if msg.err != nil {
 			m.waiting = false
-			m.messages[len(m.messages)-1] = "Assistant: Error - " + msg.err.Error()
+			m.messages[len(m.messages)-1] = "🦙 Error - " + msg.err.Error()
 			m.streamResponse = nil
 			return m, nil
 		}
@@ -60,16 +77,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.currentResponse += msg.token
-		m.messages[len(m.messages)-1] = "Assistant: " + m.currentResponse
+		m.messages[len(m.messages)-1] = "🦙 " + m.currentResponse
 		m.viewport.SetContent(m.View())
 		m.viewport.GotoBottom()
 		return m, streamResponse(m.streamResponse)
 	case ollamaResponseMsg:
 		m.waiting = false
 		if msg.err != nil {
-			m.messages = append(m.messages, "Assistant: Error - "+msg.err.Error())
-		} else {
-			m.messages = append(m.messages, "Assistant: "+msg.response)
+			m.messages = append(m.messages, "🦙 Error - "+msg.err.Error())
 		}
 		m.viewport.SetContent(m.View())
 		m.viewport.GotoBottom()
@@ -78,17 +93,26 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeyEnter:
 			userInput := m.input.Value()
-			m.messages = append(m.messages, "User: "+userInput)
+			m.messages = append(m.messages, "🧋 "+userInput)
 			m.input.Reset()
 			m.waiting = true
-			return m, sendToOllama(userInput, m.ollamaModel)
+			m.spinnerIndex = 0
+			return m, tea.Batch(sendToOllama(userInput, m.ollamaModel), tick())
 		case tea.KeyCtrlC, tea.KeyEsc:
 			m.quitting = true
 			return m, tea.Quit
 		}
+	case tickMsg:
+		if m.waiting {
+			m.spinnerIndex = (m.spinnerIndex + 1) % len(spinnerFrames)
+			m.viewport.SetContent(m.View())
+			return m, tick()
+		}
+		return m, nil
 	}
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
+
 }
 
 func (m model) View() string {
@@ -106,10 +130,11 @@ func (m model) View() string {
 		s += "\n"
 	}
 
-	s += "\n"
-	s += fmt.Sprintf("Your input: %s", m.input.View())
-	s += "\n"
-	s += "\n--------------------\n"
+	if m.waiting {
+		s += spinnerFrames[m.spinnerIndex] + "\n"
+	}
+
+	s += fmt.Sprintf("🧋%s", m.input.View())
 	return s
 }
 
