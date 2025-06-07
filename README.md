@@ -1,9 +1,12 @@
 # 🦙 Ollama TUI
 
 A beautiful terminal user interface for conversing with local AI models through Ollama. Built with Go and Bubblegum.
-
 ![Ollama TUI Demo](https://img.shields.io/badge/Go-1.24+-blue.svg)
 ![License](https://img.shields.io/badge/license-MIT-green.svg)
+
+
+https://github.com/user-attachments/assets/d4d3b8ea-8135-47d7-a1b3-f52a0aaf813d
+
 
 ## ✨ Features
 
